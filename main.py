@@ -79,6 +79,55 @@ async def debug():
     return info
 
 
+@app.get("/api/debug-search")
+async def debug_search(
+    origin: str = Query(...),
+    destination: str = Query(...),
+    depart_date: str = Query(...),
+    return_date: str = Query(None),
+):
+    from datetime import date
+    from playwright.async_api import async_playwright
+
+    params = SearchRequest(
+        origin=origin,
+        destination=destination,
+        depart_date=date.fromisoformat(depart_date),
+        return_date=date.fromisoformat(return_date) if return_date else None,
+    )
+
+    q = f"Flights+from+{origin}+to+{destination}+on+{depart_date}"
+    if return_date:
+        q += f"+return+on+{return_date}"
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=[
+            "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+        ])
+        context = await browser.new_context(locale="pt-BR", viewport={"width": 1280, "height": 900})
+        page = await context.new_page()
+
+        for path in ["/travel/flights/search", "/travel/flights"]:
+            url = f"https://www.google.com{path}?q={q}"
+            await page.goto(url, wait_until="load", timeout=30000)
+            await page.wait_for_timeout(5000)
+            title = await page.title()
+            text = await page.evaluate("() => document.body?.innerText?.substring(0, 2000) || ''")
+            url_final = page.url
+            await page.wait_for_timeout(2000)
+
+        content = await page.content()
+        await browser.close()
+
+        return {
+            "url_tried": f"https://www.google.com/travel/flights/search?q={q}",
+            "url_final": url_final,
+            "title": title,
+            "page_text": text,
+            "html_snippet": content[:1000],
+        }
+
+
 @app.get("/api/search", response_model=SearchResponse)
 async def search(
     origin: str = Query(..., description="Origem (ex: GRU, SAO, São Paulo)"),
