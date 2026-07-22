@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maika Voos - Busca de Passagens</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="logo-area">
+                <div class="logo-icon">&#9992;</div>
+                <div>
+                    <h1>Maika Voos</h1>
+                    <p class="subtitle">Busque passagens a&eacute;reas com os melhores pre&ccedil;os</p>
+                </div>
+            </div>
+        </header>
+
+        <form class="search-form" id="searchForm">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="origin">Origem</label>
+                    <input type="text" id="origin" placeholder="Ex: GRU, SAO, S&atilde;o Paulo" required>
+                </div>
+                <div class="form-group">
+                    <label for="destination">Destino</label>
+                    <input type="text" id="destination" placeholder="Ex: REC, Recife" required>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="departDate">Data de Ida</label>
+                    <input type="date" id="departDate" required>
+                </div>
+                <div class="form-group">
+                    <label for="returnDate">Data de Volta <span class="optional">(opcional)</span></label>
+                    <input type="date" id="returnDate">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="maxPrice">Pre&ccedil;o M&aacute;ximo (R$) <span class="optional">(opcional)</span></label>
+                    <input type="number" id="maxPrice" placeholder="Ex: 500" min="0" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label for="maxStops">Escalas <span class="optional">(opcional)</span></label>
+                    <select id="maxStops">
+                        <option value="">Qualquer</option>
+                        <option value="0">S&oacute; diretos</option>
+                        <option value="1">M&aacute;x. 1 escala</option>
+                        <option value="2">M&aacute;x. 2 escalas</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="source">Fonte</label>
+                    <select id="source">
+                        <option value="all">Todas</option>
+                        <option value="google_flights">Google Flights</option>
+                        <option value="decolar">Decolar</option>
+                    </select>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-search" id="btnSearch">
+                <span class="btn-icon">&#9992;</span>
+                Buscar Passagens
+            </button>
+        </form>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Buscando passagens...</p>
+            <p class="loading-hint">Isso pode levar alguns segundos</p>
+        </div>
+
+        <div class="error" id="error">
+            <div class="error-icon">&#9888;</div>
+            <p id="errorMessage">Erro ao buscar passagens. Verifique os par&acirc;metros e tente novamente.</p>
+        </div>
+
+        <div class="results" id="results">
+            <div class="results-header">
+                <h2>Resultados</h2>
+                <span class="results-count" id="resultsCount">0 passagens encontradas</span>
+            </div>
+            <div class="results-list" id="resultsList"></div>
+        </div>
+
+        <div class="no-results" id="noResults">
+            <div class="no-results-icon">&#128196;</div>
+            <p>Nenhuma passagem encontrada</p>
+            <p class="hint">Tente alterar os par&acirc;metros de busca</p>
+        </div>
+
+        <div class="initial-state" id="initialState">
+            <div class="initial-icon">&#9992;</div>
+            <p>Preencha os dados e clique em <strong>Buscar Passagens</strong></p>
+            <p class="hint">Compara pre&ccedil;os do Google Flights e Decolar</p>
+        </div>
+
+        <footer class="footer">
+            <p>Maika Voos &copy; 2026</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

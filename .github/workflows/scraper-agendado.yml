@@ -1,0 +1,52 @@
+name: Scraper Agendado - Ofertas do Dia
+
+on:
+  schedule:
+    - cron: "0 6,12,18 * * *"
+  workflow_dispatch:
+    inputs:
+      origin:
+        description: "Origem (ex: GRU)"
+        required: false
+        default: "GRU"
+      destination:
+        description: "Destino (ex: REC)"
+        required: false
+        default: ""
+      days_ahead:
+        description: "Buscar para quantos dias a frente?"
+        required: false
+        default: "7"
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Run scraper
+        env:
+          ORIGIN: ${{ github.event.inputs.origin || 'GRU' }}
+          DESTINATION: ${{ github.event.inputs.destination || '' }}
+          DAYS_AHEAD: ${{ github.event.inputs.days_ahead || '7' }}
+        run: |
+          mkdir -p frontend/data
+          python backend/scripts/run_scheduled.py
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./frontend
+          keep_files: true
