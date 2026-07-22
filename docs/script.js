@@ -1,6 +1,6 @@
 const API_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
     ? "http://localhost:8000"
-    : "https://maika-voos-api.onrender.com";
+    : "https://maika-voos-production.up.railway.app";
 
 const form = document.getElementById("searchForm");
 const loading = document.getElementById("loading");
