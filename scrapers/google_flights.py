@@ -243,27 +243,24 @@ class GoogleFlightsScraper(BaseScraper):
                     "() => document.body?.innerText || ''"
                 )
 
-                prices = re.findall(
-                    r"(?:US|R)?\$[\s\xa0\u00a0]*([\d,.]+)",
+                is_usd = bool(re.search(r"US\$", all_text))
+
+                raw_prices = re.findall(
+                    r"((?:US|R)?)\$[\s\xa0\u00a0]*([\d,.]+)",
                     all_text,
                     re.IGNORECASE,
                 )
-                prices = [f"${p}" for p in prices[:30]]
+                prices = [m[1] for m in raw_prices[:30]]
 
-                airlines_in_page = re.findall(
-                    r"^(latam|gol|azul|tap|avianca|american|united|delta)$",
-                    all_text,
-                    re.IGNORECASE | re.MULTILINE,
-                )
-
-                logger.info(f"Page text length: {len(all_text)}, prices found: {len(prices)}")
-                logger.info(f"Prices sample: {prices[:5]}")
+                logger.info(f"Page text length: {len(all_text)}, prices found: {len(prices)}, is_usd={is_usd}")
 
                 if not prices:
-                    price_matches = re.findall(
-                        r"(?:US)?R?\$\s*[\d.,]+", all_text
+                    raw_prices = re.findall(
+                        r"((?:US|R)?)\$[\s\xa0\u00a0]*([\d,.]+)",
+                        all_text,
+                        re.IGNORECASE,
                     )
-                    prices = price_matches[:30]
+                    prices = [m[1] for m in raw_prices[:30]]
 
                 lines = [
                     l.strip()
@@ -271,7 +268,7 @@ class GoogleFlightsScraper(BaseScraper):
                     if l.strip()
                 ]
 
-                results = self._parse_results(lines, prices, params)
+                results = self._parse_results(lines, prices, params, is_usd)
                 logger.info(f"Parsed {len(results)} results")
 
             except Exception as e:
@@ -288,9 +285,12 @@ class GoogleFlightsScraper(BaseScraper):
         lines: List[str],
         prices: List[str],
         params: SearchRequest,
+        is_usd: bool = False,
     ) -> List[FlightResult]:
         results = []
         price_index = 0
+        seen = set()
+        currency = "USD" if is_usd else "BRL"
 
         airline_map = {
             "latam": "LATAM",
@@ -384,6 +384,11 @@ class GoogleFlightsScraper(BaseScraper):
             if not price:
                 continue
 
+            key = (airline, price)
+            if key in seen:
+                continue
+            seen.add(key)
+
             results.append(
                 FlightResult(
                     airline=airline,
@@ -394,7 +399,7 @@ class GoogleFlightsScraper(BaseScraper):
                     stops=stops,
                     duration=duration,
                     price=price,
-                    currency="BRL",
+                    currency=currency,
                     url=f"https://www.google.com/travel/flights",
                     source="google_flights",
                     logo=self._get_airline_logo(airline),
