@@ -250,17 +250,14 @@ class GoogleFlightsScraper(BaseScraper):
                     all_text,
                     re.IGNORECASE,
                 )
-                prices = [m[1] for m in raw_prices[:30]]
+                prices = []
+                for prefix, val in raw_prices[:40]:
+                    parsed = self._parse_price(val)
+                    if parsed and parsed >= 10:
+                        currency_price = "USD" if prefix.upper() == "US" else "BRL"
+                        prices.append((parsed, currency_price))
 
                 logger.info(f"Page text length: {len(all_text)}, prices found: {len(prices)}, is_usd={is_usd}")
-
-                if not prices:
-                    raw_prices = re.findall(
-                        r"((?:US|R)?)\$[\s\xa0\u00a0]*([\d,.]+)",
-                        all_text,
-                        re.IGNORECASE,
-                    )
-                    prices = [m[1] for m in raw_prices[:30]]
 
                 lines = [
                     l.strip()
@@ -283,14 +280,13 @@ class GoogleFlightsScraper(BaseScraper):
     def _parse_results(
         self,
         lines: List[str],
-        prices: List[str],
+        prices: List[tuple],
         params: SearchRequest,
         is_usd: bool = False,
     ) -> List[FlightResult]:
         results = []
         price_index = 0
         seen = set()
-        currency = "USD" if is_usd else "BRL"
 
         airline_map = {
             "latam": "LATAM",
@@ -321,12 +317,7 @@ class GoogleFlightsScraper(BaseScraper):
             logger.info("No airline names found in page text")
             return []
 
-        price_values = []
-        for p in prices:
-            parsed = self._parse_price(p)
-            if parsed:
-                price_values.append(parsed)
-
+        price_values = [(v, c) for v, c in prices if v >= 10]
         if not price_values:
             return []
 
@@ -335,6 +326,11 @@ class GoogleFlightsScraper(BaseScraper):
             text,
             flags=re.IGNORECASE,
         )
+
+        q = f"Flights+from+{params.origin}+to+{params.destination}+on+{params.depart_date}"
+        if params.return_date:
+            q += f"+return+on+{params.return_date}"
+        search_url = f"https://www.google.com/travel/flights/search?q={q}"
 
         for block in block_delimiters:
             block = block.strip()
@@ -369,22 +365,16 @@ class GoogleFlightsScraper(BaseScraper):
                 m = dur_match.group(2) or "00"
                 duration = f"{h}h{m}"
 
-            price = None
+            price_val = None
+            price_ccy = "USD" if is_usd else "BRL"
             if price_index < len(price_values):
-                price = price_values[price_index]
+                price_val, price_ccy = price_values[price_index]
                 price_index += 1
 
-            if not price:
-                price_match = re.search(
-                    r"(?:us)?r?\$\s*([\d.,]+)", block, re.IGNORECASE
-                )
-                if price_match:
-                    price = self._parse_price(price_match.group(0))
-
-            if not price:
+            if not price_val:
                 continue
 
-            key = (airline, price)
+            key = (airline, price_val)
             if key in seen:
                 continue
             seen.add(key)
@@ -398,9 +388,9 @@ class GoogleFlightsScraper(BaseScraper):
                     return_time=str(params.return_date) if params.return_date else None,
                     stops=stops,
                     duration=duration,
-                    price=price,
-                    currency=currency,
-                    url=f"https://www.google.com/travel/flights",
+                    price=price_val,
+                    currency=price_ccy,
+                    url=search_url,
                     source="google_flights",
                     logo=self._get_airline_logo(airline),
                 )
