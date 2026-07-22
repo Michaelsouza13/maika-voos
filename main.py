@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import SearchRequest, SearchResponse, FlightResult
-from scrapers import GoogleFlightsScraper, DecolarScraper
+from scrapers import GoogleFlightsScraper, DecolarScraper, Milhas123Scraper
 from scrapers.base import BaseScraper
 
 logging.basicConfig(
@@ -32,6 +32,7 @@ app.add_middleware(
 scrapers: List[BaseScraper] = [
     GoogleFlightsScraper(),
     DecolarScraper(),
+    Milhas123Scraper(),
 ]
 
 SCRAPER_MAP = {s.name: s for s in scrapers}
