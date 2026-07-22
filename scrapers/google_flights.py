@@ -239,23 +239,35 @@ class GoogleFlightsScraper(BaseScraper):
                     logger.info(f"HTML snippet: {content[:500]}")
                     return []
 
-                all_text, prices = await page.evaluate("""
+                all_text, prices, airlines_in_page = await page.evaluate("""
                     () => {
                         const allText = document.body?.innerText || '';
 
-                        const allSpans = [...document.querySelectorAll('span, div, button, label')];
+                        const allEls = [...document.querySelectorAll('span, div, button, label, strong')];
                         const prices = [];
-                        const seen = new Set();
-                        for (const el of allSpans) {
+                        const seenPrice = new Set();
+                        for (const el of allEls) {
                             const t = el.textContent.trim();
-                            if (!t || seen.has(t)) continue;
-                            seen.add(t);
-                            if (/^R?\\$\\s?[\\d.,]+$/.test(t) || /^\\d{1,3}(?:\\.\\d{3})*,\\d{2}$/.test(t)) {
+                            if (!t || seenPrice.has(t)) continue;
+                            seenPrice.add(t);
+                            if (/^(US)?R?\\$\\s?[\\d.,]+$/.test(t) || /^\\d{1,3}(?:\\.\\d{3})*,\\d{2}$/.test(t)) {
                                 prices.push(t);
                             }
                         }
 
-                        return { allText, prices: prices.slice(0, 30) };
+                        const allTextLower = allText.toLowerCase();
+                        const airlines = [];
+                        const seenLine = new Set();
+                        for (const line of allText.split('\\n')) {
+                            const l = line.trim().toLowerCase();
+                            if (!l || seenLine.has(l)) continue;
+                            seenLine.add(l);
+                            if (/^(latam|gol|azul|tap|avianca|american|united|delta)$/.test(l)) {
+                                airlines.push(line.trim());
+                            }
+                        }
+
+                        return { allText, prices: prices.slice(0, 30), airlines_in_page: airlines };
                     }
                 """)
 
@@ -264,7 +276,7 @@ class GoogleFlightsScraper(BaseScraper):
 
                 if not prices:
                     price_matches = re.findall(
-                        r"R\$\s*[\d.]+,\d{2}", all_text
+                        r"(?:US)?R?\$\s*[\d.,]+", all_text
                     )
                     prices = price_matches[:30]
 
@@ -379,7 +391,7 @@ class GoogleFlightsScraper(BaseScraper):
 
             if not price:
                 price_match = re.search(
-                    r"r\$\s*([\d.]+,\d{2})", block
+                    r"(?:us)?r?\$\s*([\d.,]+)", block, re.IGNORECASE
                 )
                 if price_match:
                     price = self._parse_price(price_match.group(0))
@@ -409,6 +421,7 @@ class GoogleFlightsScraper(BaseScraper):
     def _parse_price(self, text: str) -> Optional[float]:
         if not text:
             return None
+        text = re.sub(r"^us", "", text, flags=re.IGNORECASE)
         digits = re.sub(r"[^\d,.]", "", text)
         if "," in digits and "." in digits:
             if digits.rindex(",") > digits.rindex("."):
