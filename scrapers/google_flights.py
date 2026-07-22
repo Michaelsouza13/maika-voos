@@ -1,5 +1,4 @@
 import re
-import os
 import logging
 from typing import List, Optional
 
@@ -15,6 +14,190 @@ class GoogleFlightsScraper(BaseScraper):
     def __init__(self):
         self.name = "google_flights"
 
+    async def _try_search_url(
+        self, page, params: SearchRequest
+    ) -> Optional[bool]:
+        q = (
+            f"Flights+from+{params.origin}+to+{params.destination}"
+            f"+on+{params.depart_date}"
+        )
+        if params.return_date:
+            q += f"+return+on+{params.return_date}"
+
+        for path in ["/travel/flights/search", "/travel/flights"]:
+            url = f"https://www.google.com{path}?q={q}"
+            logger.info(f"Trying URL: {url}")
+            await page.goto(url, wait_until="load", timeout=30000)
+            await page.wait_for_timeout(4000)
+
+            text = await page.evaluate(
+                "() => document.body?.innerText?.substring(0, 300) || ''"
+            )
+            logger.info(f"Page preview: {text[:200]}")
+
+            if "results" in text.lower() or "result" in text.lower():
+                logger.info(f"Found results with path: {path}")
+                return True
+
+        return False
+
+    async def _search_through_ui(
+        self, page, params: SearchRequest
+    ) -> bool:
+        try:
+            await page.goto(
+                "https://www.google.com/travel/flights",
+                wait_until="load",
+                timeout=30000,
+            )
+            await page.wait_for_timeout(3000)
+        except Exception as e:
+            logger.error(f"Failed to load Google Flights: {e}")
+            return False
+
+        try:
+            cookie_btn = page.locator("button:has-text('Aceitar')")
+            if await cookie_btn.count() > 0:
+                await cookie_btn.first.click()
+                await page.wait_for_timeout(1500)
+        except Exception:
+            pass
+
+        origin_inputs = [
+            'input[aria-label*="from i"]',
+            'input[aria-label*="Where from"]',
+            'input[placeholder*="Where"]',
+            'input[aria-label*="Origem"]',
+            'input.e5F5td',
+            '[aria-label*="from"] input',
+            'input',
+        ]
+
+        for sel in origin_inputs:
+            try:
+                inp = page.locator(sel).first
+                if await inp.count() > 0:
+                    await inp.click()
+                    await page.wait_for_timeout(500)
+                    await inp.fill("")
+                    await inp.type(params.origin, delay=80)
+                    await page.wait_for_timeout(2000)
+
+                    try:
+                        suggestion = page.locator(
+                            '[role="listbox"] [role="option"]'
+                        ).first
+                        if await suggestion.count() > 0:
+                            await suggestion.click()
+                            await page.wait_for_timeout(1000)
+                            logger.info(f"Selected origin via {sel}")
+                            break
+                    except Exception:
+                        pass
+
+                    try:
+                        await page.keyboard.press("Enter")
+                        await page.wait_for_timeout(1500)
+                        logger.info(f"Origin entered via keyboard on {sel}")
+                        break
+                    except Exception:
+                        continue
+            except Exception as e:
+                logger.warning(f"Origin selector {sel} failed: {e}")
+                continue
+        else:
+            logger.warning("Could not fill origin via any selector")
+            return False
+
+        for sel in [
+            'input[aria-label*="to"]',
+            'input[aria-label*="Where to"]',
+            'input[aria-label*="Destino"]',
+            'input.e5F5td',
+            '[aria-label*="to"] input',
+            'input',
+        ]:
+            try:
+                inp = page.locator(sel).first
+                if await inp.count() > 0:
+                    await inp.click()
+                    await page.wait_for_timeout(500)
+                    await inp.fill("")
+                    await inp.type(params.destination, delay=80)
+                    await page.wait_for_timeout(2000)
+
+                    try:
+                        suggestion = page.locator(
+                            '[role="listbox"] [role="option"]'
+                        ).first
+                        if await suggestion.count() > 0:
+                            await suggestion.click()
+                            await page.wait_for_timeout(1000)
+                            logger.info(f"Selected destination via {sel}")
+                            break
+                    except Exception:
+                        pass
+
+                    try:
+                        await page.keyboard.press("Enter")
+                        await page.wait_for_timeout(1500)
+                        logger.info(f"Dest entered via keyboard on {sel}")
+                        break
+                    except Exception:
+                        continue
+            except Exception as e:
+                logger.warning(f"Dest selector {sel} failed: {e}")
+                continue
+        else:
+            logger.warning("Could not fill destination")
+            return False
+
+        try:
+            date_btn = page.locator(
+                'button[aria-label*="Departure"], '
+                '[aria-label*="data de ida"], '
+                'input[aria-label*="date"]'
+            ).first
+            if await date_btn.count() > 0:
+                await date_btn.click()
+                await page.wait_for_timeout(1000)
+                date_str = params.depart_date.strftime("%d/%m/%Y")
+                try:
+                    date_cell = page.locator(
+                        f'[role="gridcell"][aria-label*="{params.depart_date.day}"]'
+                    ).first
+                    if await date_cell.count() > 0:
+                        await date_cell.click()
+                        await page.wait_for_timeout(1000)
+                except Exception:
+                    try:
+                        await page.keyboard.type(date_str)
+                        await page.keyboard.press("Enter")
+                        await page.wait_for_timeout(1000)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Date selection: {e}")
+
+        try:
+            search_btn = page.locator(
+                'button[aria-label="Search"], '
+                'button:has-text("Search"), '
+                'button:has-text("Buscar"), '
+                '[role="button"]:has-text("Search"), '
+                'button[jsaction]'
+            ).first
+            if await search_btn.count() > 0:
+                await search_btn.click()
+                await page.wait_for_timeout(5000)
+                logger.info("Clicked search button")
+        except Exception as e:
+            logger.warning(f"Search button: {e}")
+
+        await page.wait_for_timeout(5000)
+
+        return True
+
     async def search(self, params: SearchRequest) -> List[FlightResult]:
         results = []
         async with async_playwright() as p:
@@ -25,7 +208,6 @@ class GoogleFlightsScraper(BaseScraper):
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
-                    "--disable-blink-features=AutomationControlled",
                 ],
             )
             context = await browser.new_context(
@@ -41,132 +223,64 @@ class GoogleFlightsScraper(BaseScraper):
             page = await context.new_page()
 
             try:
-                q = (
-                    f"Flights+from+{params.origin}+to+{params.destination}"
-                    f"+on+{params.depart_date}"
-                )
-                if params.return_date:
-                    q += f"+return+on+{params.return_date}"
-
-                url = f"https://www.google.com/travel/flights?q={q}"
-                logger.info(f"Navigating to: {url}")
-
-                await page.goto(url, wait_until="load", timeout=45000)
-                await page.wait_for_timeout(5000)
-
-                try:
-                    cookie_btn = page.locator("button:has-text('Aceitar')")
-                    if await cookie_btn.count() > 0:
-                        await cookie_btn.first.click()
-                        await page.wait_for_timeout(1500)
-                except Exception:
-                    pass
-
-                selectors = [
-                    'div[role="list"]',
-                    'ol[role="list"]',
-                    '[data-flights-result]',
-                    'ol.Rk10dc',
-                    'div.Rk10dc',
-                    '[class*="result"]',
-                    '[jsname]',
-                ]
-
-                found_selector = None
-                for sel in selectors:
-                    try:
-                        await page.wait_for_selector(sel, timeout=4000)
-                        found_selector = sel
-                        logger.info(f"Found container: {sel}")
-                        break
-                    except PwTimeout:
-                        continue
-
-                if not found_selector:
-                    logger.warning("No result container found. Debugging...")
-                    title = await page.title()
-                    logger.info(f"Page title: {title}")
-                    content_preview = await page.evaluate(
-                        "() => document.body?.innerText?.substring(0, 2000) || 'no body'"
-                    )
-                    logger.info(f"Page text preview: {content_preview}")
-                    try:
-                        await page.screenshot(
-                            path="/tmp/gf_debug.png", full_page=True
-                        )
-                        logger.info("Screenshot saved to /tmp/gf_debug.png")
-                    except Exception as e:
-                        logger.error(f"Screenshot failed: {e}")
-                    return []
+                if not await self._try_search_url(page, params):
+                    logger.info("URL search failed, trying UI interaction")
+                    await self._search_through_ui(page, params)
 
                 await page.wait_for_timeout(3000)
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(2000)
 
-                raw, prices, structured = await page.evaluate("""
+                page_text = await page.evaluate(
+                    "() => document.body?.innerText || ''"
+                )
+
+                if "not found" in page_text.lower() or len(page_text) < 100:
+                    logger.warning("No results detected on page")
+                    content = await page.content()
+                    logger.info(f"HTML snippet: {content[:500]}")
+                    return []
+
+                all_text, prices = await page.evaluate("""
                     () => {
-                        const items = [];
+                        const allText = document.body?.innerText || '';
 
-                        const containers = [
-                            ...document.querySelectorAll('[role="list"] > [role="listitem"]'),
-                            ...document.querySelectorAll('ol[role="list"] > li'),
-                            ...document.querySelectorAll('[jsname]'),
-                        ];
-
+                        const allSpans = [...document.querySelectorAll('span, div, button, label')];
+                        const prices = [];
                         const seen = new Set();
-                        for (const el of containers) {
-                            const text = el.textContent.trim();
-                            if (text && text.length > 20 && !seen.has(text)) {
-                                seen.add(text);
-                                items.push(text);
+                        for (const el of allSpans) {
+                            const t = el.textContent.trim();
+                            if (!t || seen.has(t)) continue;
+                            seen.add(t);
+                            if (/^R?\\$\\s?[\\d.,]+$/.test(t) || /^\\d{1,3}(?:\\.\\d{3})*,\\d{2}$/.test(t)) {
+                                prices.push(t);
                             }
                         }
 
-                        if (items.length === 0) {
-                            document.querySelectorAll('*').forEach(el => {
-                                const text = el.textContent.trim();
-                                if (text.length > 30 && /R\\$/.test(text)) {
-                                    if (!seen.has(text)) {
-                                        seen.add(text);
-                                        items.push(text);
-                                    }
-                                }
-                            });
-                        }
-
-                        const allSpans = [...document.querySelectorAll('span, div, button')];
-                        const prices = allSpans
-                            .filter(s => {
-                                const t = s.textContent.trim();
-                                return /^R?\\$\\s?[\\d.,]+$/.test(t) || /^\\d{1,3}(?:\\.\\d{3})*,\\d{2}$/.test(t);
-                            })
-                            .map(s => s.textContent.trim())
-                            .slice(0, 20);
-
-                        const structured = [];
-                        for (const item of items) {
-                            const lines = item.split('\\n').map(l => l.trim()).filter(Boolean);
-                            const airline = lines.find(l =>
-                                /latam|gol|azul|tap|american|united|delta|avianca/i.test(l)
-                            ) || '';
-                            const priceMatch = item.match(/R\\$\\s*([\\d.]+,\\d{2})/);
-                            const price = priceMatch ? priceMatch[0] : '';
-                            const stopsMatch = item.match(/(direto|não\\s*para|\\d+\\s*escala)/i);
-                            const stops = stopsMatch ? stopsMatch[0] : '';
-                            structured.push({ airline, price, stops, text: item });
-                        }
-
-                        return { raw: items, prices, structured };
+                        return { allText, prices: prices.slice(0, 30) };
                     }
                 """)
 
-                logger.info(f"Raw items: {len(raw)}, Prices: {len(prices)}, Structured: {len(structured)}")
+                logger.info(f"Page text length: {len(all_text)}, prices found: {len(prices)}")
+                logger.info(f"Prices sample: {prices[:5]}")
 
-                results = self._parse_results(raw, prices, params)
+                if not prices:
+                    price_matches = re.findall(
+                        r"R\$\s*[\d.]+,\d{2}", all_text
+                    )
+                    prices = price_matches[:30]
+
+                lines = [
+                    l.strip()
+                    for l in all_text.split("\n")
+                    if l.strip()
+                ]
+
+                results = self._parse_results(lines, prices, params)
                 logger.info(f"Parsed {len(results)} results")
 
             except Exception as e:
-                logger.error(f"Google Flights scraper error: {e}", exc_info=True)
+                logger.error(
+                    f"Google Flights error: {e}", exc_info=True
+                )
             finally:
                 await browser.close()
 
@@ -174,7 +288,7 @@ class GoogleFlightsScraper(BaseScraper):
 
     def _parse_results(
         self,
-        raw_texts: List[str],
+        lines: List[str],
         prices: List[str],
         params: SearchRequest,
     ) -> List[FlightResult]:
@@ -191,7 +305,6 @@ class GoogleFlightsScraper(BaseScraper):
             "delta": "Delta",
             "air france": "Air France",
             "tap": "TAP",
-            "tap air portugal": "TAP",
             "iberia": "Iberia",
             "british airways": "British Airways",
             "emirates": "Emirates",
@@ -199,77 +312,97 @@ class GoogleFlightsScraper(BaseScraper):
             "avianca": "Avianca",
             "copa": "Copa Airlines",
             "jetblue": "JetBlue",
-            "spirit": "Spirit",
+            "spirit": "Spirit Airlines",
         }
 
-        known_airlines = list(airline_map.keys()) + list(airline_map.values())
+        text = "\n".join(lines).lower()
 
-        for text in raw_texts:
-            text_lower = text.lower()
+        if not re.search(
+            r"(latam|gol|azul|tap|avianca|american)",
+            text,
+        ):
+            logger.info("No airline names found in page text")
+            return []
+
+        price_values = []
+        for p in prices:
+            parsed = self._parse_price(p)
+            if parsed:
+                price_values.append(parsed)
+
+        if not price_values:
+            return []
+
+        block_delimiters = re.split(
+            r"(?=\b(?:latam|gol|azul|tap|avianca|american|united|delta)\b)",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        for block in block_delimiters:
+            block = block.strip()
+            if len(block) < 20:
+                continue
 
             airline = None
             for alias, name in airline_map.items():
-                if alias in text_lower:
+                if alias in block:
                     airline = name
                     break
-
-            if not airline:
-                for name in known_airlines:
-                    if name.lower() in text_lower:
-                        airline = name
-                        break
 
             if not airline:
                 continue
 
             stops = 2
             if re.search(
-                r"\b(direto|não para|sem escalas|direct|non.?stop)\b",
-                text_lower,
+                r"\b(direto|não para|sem escalas|direct|non.?stop)\b", block
             ):
                 stops = 0
-            elif re.search(r"\b(1 escala|1 parada)\b", text_lower):
+            elif re.search(r"\b(1 escala|1 parada)\b", block):
                 stops = 1
-            elif re.search(r"\b(2 escalas|2 paradas)\b", text_lower):
+            elif re.search(r"\b(2 escalas|2 paradas)\b", block):
                 stops = 2
 
             duration = "—"
-            dur_match = re.search(r"(\d{1,2})\s*h\s*(?:(\d{1,2})\s*min)?", text_lower)
+            dur_match = re.search(
+                r"(\d{1,2})\s*h\s*(?:(\d{1,2})\s*min)?", block
+            )
             if dur_match:
                 h = dur_match.group(1)
                 m = dur_match.group(2) or "00"
                 duration = f"{h}h{m}"
 
             price = None
-            if price_index < len(prices):
-                price = self._parse_price(prices[price_index])
+            if price_index < len(price_values):
+                price = price_values[price_index]
                 price_index += 1
 
             if not price:
-                price_brl = re.search(
-                    r"r\$\s*([\d.]+,\d{2})", text_lower
+                price_match = re.search(
+                    r"r\$\s*([\d.]+,\d{2})", block
                 )
-                if price_brl:
-                    price = self._parse_price(price_brl.group(0))
+                if price_match:
+                    price = self._parse_price(price_match.group(0))
 
             if not price:
                 continue
 
-            result = FlightResult(
-                airline=airline,
-                from_code=params.origin.upper(),
-                to_code=params.destination.upper(),
-                depart_time=str(params.depart_date),
-                return_time=str(params.return_date) if params.return_date else None,
-                stops=stops,
-                duration=duration,
-                price=price,
-                currency="BRL",
-                url=f"https://www.google.com/travel/flights?q=Flights+from+{params.origin}+to+{params.destination}+on+{params.depart_date}",
-                source="google_flights",
-                logo=self._get_airline_logo(airline),
+            results.append(
+                FlightResult(
+                    airline=airline,
+                    from_code=params.origin.upper(),
+                    to_code=params.destination.upper(),
+                    depart_time=str(params.depart_date),
+                    return_time=str(params.return_date) if params.return_date else None,
+                    stops=stops,
+                    duration=duration,
+                    price=price,
+                    currency="BRL",
+                    url=f"https://www.google.com/travel/flights",
+                    source="google_flights",
+                    logo=self._get_airline_logo(airline),
+                )
             )
-            results.append(result)
 
         return results
 
@@ -308,7 +441,7 @@ class GoogleFlightsScraper(BaseScraper):
             "Avianca": "avianca",
             "Copa Airlines": "copa-airlines",
             "JetBlue": "jetblue",
-            "Spirit": "spirit-airlines",
+            "Spirit Airlines": "spirit-airlines",
         }
         slug = slugs.get(airline, airline.lower().replace(" ", "-"))
         return f"https://www.gstatic.com/flights/airline_logos/70px/{slug}.png"
