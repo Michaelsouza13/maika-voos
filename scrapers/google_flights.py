@@ -1,7 +1,7 @@
 import re
+import os
 import logging
 from typing import List, Optional
-from datetime import datetime
 
 from playwright.async_api import async_playwright, TimeoutError as PwTimeout
 
@@ -24,6 +24,7 @@ class GoogleFlightsScraper(BaseScraper):
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
+                    "--disable-gpu",
                     "--disable-blink-features=AutomationControlled",
                 ],
             )
@@ -36,64 +37,136 @@ class GoogleFlightsScraper(BaseScraper):
                 locale="pt-BR",
                 timezone_id="America/Sao_Paulo",
                 viewport={"width": 1280, "height": 900},
-                permissions=[],
             )
             page = await context.new_page()
 
             try:
-                q = f"Flights+from+{params.origin}+to+{params.destination}+on+{params.depart_date}"
+                q = (
+                    f"Flights+from+{params.origin}+to+{params.destination}"
+                    f"+on+{params.depart_date}"
+                )
                 if params.return_date:
                     q += f"+return+on+{params.return_date}"
 
                 url = f"https://www.google.com/travel/flights?q={q}"
                 logger.info(f"Navigating to: {url}")
 
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                await page.wait_for_timeout(4000)
+                await page.goto(url, wait_until="load", timeout=45000)
+                await page.wait_for_timeout(5000)
 
                 try:
                     cookie_btn = page.locator("button:has-text('Aceitar')")
                     if await cookie_btn.count() > 0:
                         await cookie_btn.first.click()
-                        await page.wait_for_timeout(1000)
+                        await page.wait_for_timeout(1500)
                 except Exception:
                     pass
 
-                try:
-                    await page.wait_for_selector(
-                        'div[role="list"]', timeout=15000
+                selectors = [
+                    'div[role="list"]',
+                    'ol[role="list"]',
+                    '[data-flights-result]',
+                    'ol.Rk10dc',
+                    'div.Rk10dc',
+                    '[class*="result"]',
+                    '[jsname]',
+                ]
+
+                found_selector = None
+                for sel in selectors:
+                    try:
+                        await page.wait_for_selector(sel, timeout=4000)
+                        found_selector = sel
+                        logger.info(f"Found container: {sel}")
+                        break
+                    except PwTimeout:
+                        continue
+
+                if not found_selector:
+                    logger.warning("No result container found. Debugging...")
+                    title = await page.title()
+                    logger.info(f"Page title: {title}")
+                    content_preview = await page.evaluate(
+                        "() => document.body?.innerText?.substring(0, 2000) || 'no body'"
                     )
-                    await page.wait_for_timeout(2000)
-                except PwTimeout:
-                    logger.warning("Timeout waiting for results list")
+                    logger.info(f"Page text preview: {content_preview}")
+                    try:
+                        await page.screenshot(
+                            path="/tmp/gf_debug.png", full_page=True
+                        )
+                        logger.info("Screenshot saved to /tmp/gf_debug.png")
+                    except Exception as e:
+                        logger.error(f"Screenshot failed: {e}")
                     return []
 
+                await page.wait_for_timeout(3000)
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(1500)
+                await page.wait_for_timeout(2000)
 
-                raw = await page.evaluate("""
+                raw, prices, structured = await page.evaluate("""
                     () => {
-                        const items = [...document.querySelectorAll('[role="list"] > [role="listitem"]')];
-                        return items.map(item => item.textContent);
-                    }
-                """)
+                        const items = [];
 
-                prices = await page.evaluate("""
-                    () => {
-                        const spans = [...document.querySelectorAll('span')];
-                        return spans
+                        const containers = [
+                            ...document.querySelectorAll('[role="list"] > [role="listitem"]'),
+                            ...document.querySelectorAll('ol[role="list"] > li'),
+                            ...document.querySelectorAll('[jsname]'),
+                        ];
+
+                        const seen = new Set();
+                        for (const el of containers) {
+                            const text = el.textContent.trim();
+                            if (text && text.length > 20 && !seen.has(text)) {
+                                seen.add(text);
+                                items.push(text);
+                            }
+                        }
+
+                        if (items.length === 0) {
+                            document.querySelectorAll('*').forEach(el => {
+                                const text = el.textContent.trim();
+                                if (text.length > 30 && /R\\$/.test(text)) {
+                                    if (!seen.has(text)) {
+                                        seen.add(text);
+                                        items.push(text);
+                                    }
+                                }
+                            });
+                        }
+
+                        const allSpans = [...document.querySelectorAll('span, div, button')];
+                        const prices = allSpans
                             .filter(s => {
                                 const t = s.textContent.trim();
                                 return /^R?\\$\\s?[\\d.,]+$/.test(t) || /^\\d{1,3}(?:\\.\\d{3})*,\\d{2}$/.test(t);
                             })
-                            .map(s => s.textContent.trim());
+                            .map(s => s.textContent.trim())
+                            .slice(0, 20);
+
+                        const structured = [];
+                        for (const item of items) {
+                            const lines = item.split('\\n').map(l => l.trim()).filter(Boolean);
+                            const airline = lines.find(l =>
+                                /latam|gol|azul|tap|american|united|delta|avianca/i.test(l)
+                            ) || '';
+                            const priceMatch = item.match(/R\\$\\s*([\\d.]+,\\d{2})/);
+                            const price = priceMatch ? priceMatch[0] : '';
+                            const stopsMatch = item.match(/(direto|não\\s*para|\\d+\\s*escala)/i);
+                            const stops = stopsMatch ? stopsMatch[0] : '';
+                            structured.push({ airline, price, stops, text: item });
+                        }
+
+                        return { raw: items, prices, structured };
                     }
                 """)
 
+                logger.info(f"Raw items: {len(raw)}, Prices: {len(prices)}, Structured: {len(structured)}")
+
                 results = self._parse_results(raw, prices, params)
+                logger.info(f"Parsed {len(results)} results")
 
             except Exception as e:
-                logger.error(f"Google Flights scraper error: {e}")
+                logger.error(f"Google Flights scraper error: {e}", exc_info=True)
             finally:
                 await browser.close()
 
@@ -111,8 +184,8 @@ class GoogleFlightsScraper(BaseScraper):
         airline_map = {
             "latam": "LATAM",
             "gol": "GOL",
-            "voepass": "Voepass",
             "azul": "Azul",
+            "voepass": "Voepass",
             "american airlines": "American Airlines",
             "united": "United",
             "delta": "Delta",
@@ -150,11 +223,14 @@ class GoogleFlightsScraper(BaseScraper):
                 continue
 
             stops = 2
-            if "não para" in text_lower or "direto" in text_lower or "direct" in text_lower:
+            if re.search(
+                r"\b(direto|não para|sem escalas|direct|non.?stop)\b",
+                text_lower,
+            ):
                 stops = 0
-            elif "1 escala" in text_lower or "1 parada" in text_lower:
+            elif re.search(r"\b(1 escala|1 parada)\b", text_lower):
                 stops = 1
-            elif "2 escalas" in text_lower or "2 paradas" in text_lower:
+            elif re.search(r"\b(2 escalas|2 paradas)\b", text_lower):
                 stops = 2
 
             duration = "—"
@@ -164,15 +240,9 @@ class GoogleFlightsScraper(BaseScraper):
                 m = dur_match.group(2) or "00"
                 duration = f"{h}h{m}"
 
-            time_match = re.findall(
-                r"(\d{1,2}:\d{2})\s*(?:da\s*manhã|da\s*tarde|da\s*noite|—)?",
-                text_lower,
-            )
-
             price = None
             if price_index < len(prices):
-                price_raw = prices[price_index]
-                price = self._parse_price(price_raw)
+                price = self._parse_price(prices[price_index])
                 price_index += 1
 
             if not price:
@@ -199,7 +269,6 @@ class GoogleFlightsScraper(BaseScraper):
                 source="google_flights",
                 logo=self._get_airline_logo(airline),
             )
-
             results.append(result)
 
         return results
