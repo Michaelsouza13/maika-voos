@@ -4,4 +4,4 @@ __pycache__/
 venv/
 .vscode/
 *.log
-frontend/data/ofertas.json
+docs/data/ofertas.json

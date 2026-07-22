@@ -41,12 +41,12 @@ jobs:
           DESTINATION: ${{ github.event.inputs.destination || '' }}
           DAYS_AHEAD: ${{ github.event.inputs.days_ahead || '7' }}
         run: |
-          mkdir -p frontend/data
+          mkdir -p docs/data
           python scripts/run_scheduled.py
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./frontend
+          publish_dir: ./docs
           keep_files: true
