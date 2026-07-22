@@ -46,6 +46,38 @@ async def health():
     }
 
 
+@app.get("/api/debug")
+async def debug():
+    import sys, os, json
+    info = {
+        "python": sys.version,
+        "playwright": None,
+        "chromium": None,
+    }
+    try:
+        import playwright
+        info["playwright"] = playwright.__version__
+    except Exception as e:
+        info["playwright"] = str(e)
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+            )
+            context = await browser.new_context()
+            page = await context.new_page()
+            await page.goto("https://www.google.com/travel/flights", wait_until="domcontentloaded", timeout=20000)
+            title = await page.title()
+            text = await page.evaluate("() => document.body?.innerText?.substring(0, 500) || ''")
+            await browser.close()
+            info["chromium"] = {"google_flights_title": title, "page_preview": text[:200]}
+    except Exception as e:
+        info["chromium"] = f"Erro: {e}"
+    return info
+
+
 @app.get("/api/search", response_model=SearchResponse)
 async def search(
     origin: str = Query(..., description="Origem (ex: GRU, SAO, São Paulo)"),
