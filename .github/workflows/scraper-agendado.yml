@@ -31,7 +31,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r backend/requirements.txt
+          pip install -r requirements.txt
           playwright install chromium
           playwright install-deps chromium
 
@@ -42,7 +42,7 @@ jobs:
           DAYS_AHEAD: ${{ github.event.inputs.days_ahead || '7' }}
         run: |
           mkdir -p frontend/data
-          python backend/scripts/run_scheduled.py
+          python scripts/run_scheduled.py
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
