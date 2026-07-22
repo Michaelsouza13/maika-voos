@@ -1,0 +1,11 @@
+__pycache__
+*.pyc
+.git
+.gitignore
+.github
+.vscode
+.env
+venv
+docs
+runtime.txt
+render.yaml
